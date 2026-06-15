@@ -1,0 +1,32 @@
+# Ignorar todo
+*
+
+# Permitir el propio gitignore
+!.gitignore
+
+# Permitir la carpeta PC4
+!PC4/
+!PC4/**
+
+# Python
+PC4/**/__pycache__/
+PC4/**/*.pyc
+
+# Entornos virtuales
+PC4/venv/
+PC4/.venv/
+
+# Variables de entorno
+PC4/.env
+
+# VS Code
+PC4/.vscode/
+
+# IntelliJ
+PC4/.idea/
+
+# Java compilado
+PC4/**/*.class
+
+# Logs
+PC4/**/*.log
