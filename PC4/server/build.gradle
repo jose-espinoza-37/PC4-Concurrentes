@@ -1,0 +1,66 @@
+// ============================================================
+// Dog Messenger — Server build.gradle
+// CC4P1 Programación Concurrente y Distribuida 2026-I
+// ============================================================
+
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group   = 'dogmsg'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+application {
+    mainClass = 'dogmsg.Server'
+    // Argumentos por defecto (se pueden sobreescribir con --args)
+    applicationDefaultJvmArgs = [
+        '-Xms64m',
+        '-Xmx512m',
+        '-Djava.util.logging.SimpleFormatter.format=[%1$tF %1$tT] [%4$-7s] %3$s — %5$s%n'
+    ]
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // SQLite JDBC — sin dependencias externas adicionales
+    implementation 'org.xerial:sqlite-jdbc:3.45.3.0'
+}
+
+// ── Fat JAR (incluye sqlite-jdbc dentro del jar ejecutable) ──────────────────
+jar {
+    manifest {
+        attributes(
+            'Main-Class'       : 'dogmsg.Server',
+            'Implementation-Title'  : 'Dog Messenger Server',
+            'Implementation-Version': version
+        )
+    }
+    // Incluir todas las dependencias en el JAR
+    from {
+        configurations.runtimeClasspath.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    archiveFileName = 'server.jar'
+}
+
+// ── Tarea run con argumentos por línea de comandos ───────────────────────────
+// Uso: ./gradlew run --args="--port 9000 --file-port 9001"
+run {
+    standardInput = System.in   // habilita la consola admin en tiempo real
+}
+
+// ── Tarea para compilar y empaquetar ─────────────────────────────────────────
+tasks.named('build') {
+    dependsOn jar
+}
