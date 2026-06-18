@@ -55,6 +55,17 @@ public class ClientHandler implements Runnable {
     private String token    = null;
     private String username = null;
 
+    // FIX (canal de archivos, puerto 9001): un mismo userId puede autenticar
+    // DOS conexiones (mensajes + archivos). Si la segunda conexion hiciera
+    // onlineMap.put(userId, this) sin condicion, pisaria al ClientHandler de
+    // mensajes y el chat de texto dejaria de funcionar. Por eso: si al
+    // autenticar ya existe un ClientHandler vivo para ese userId, esta
+    // conexion se adjunta como canal secundario de archivos (fileChannel) en
+    // vez de reemplazar la entrada del mapa. Solo el handler "principal" (el
+    // primero en conectar) queda registrado en onlineMap.
+    private volatile ClientHandler fileChannel = null;
+    private volatile boolean isFileChannel = false;
+
     // ── Rate limiting: paquetes en el segundo actual ───────────────────────────
     private final AtomicInteger pktsThisSec = new AtomicInteger(0);
     private long lastSecondTs = System.currentTimeMillis() / 1000;
@@ -101,16 +112,29 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            log.info("[CH] Cliente autenticado: " + username + " (id=" + userId + ")");
+            // FIX (canal de archivos): si ya hay un ClientHandler vivo registrado
+            // para este userId (la conexion de mensajes, puerto 9000), esta
+            // conexion NO se registra en onlineMap -- se adjunta como canal
+            // secundario de archivos del handler principal. Asi, MSG_FILE/
+            // MSG_IMAGE/FILE_CHUNK/FILE_COMPLETE salientes hacia este usuario
+            // se enrutan por este socket, sin tocar el canal de texto.
+            ClientHandler existing = onlineMap.get(userId);
+            if (existing != null && existing != this && existing.running) {
+                this.isFileChannel = true;
+                existing.fileChannel = this;
+                log.info("[CH] Canal de archivos adjuntado para userId=" + userId
+                        + " (" + username + ")");
+            } else {
+                onlineMap.put(userId, this);
+                log.info("[CH] Cliente autenticado (canal principal): " + username
+                        + " (id=" + userId + ")");
 
-            // Registrar en mapa de online
-            onlineMap.put(userId, this);
-
-            // Entregar mensajes offline pendientes
-            int pending = offline.pendingCount(userId);
-            if (pending > 0) {
-                log.info("[CH] Entregando " + pending + " msgs offline a " + username);
-                offline.flushToClient(userId, this);
+                // Entregar mensajes offline pendientes (solo en el canal principal)
+                int pending = offline.pendingCount(userId);
+                if (pending > 0) {
+                    log.info("[CH] Entregando " + pending + " msgs offline a " + username);
+                    offline.flushToClient(userId, this);
+                }
             }
 
             // ── 2. Loop principal ───────────────────────────────────────────────
@@ -257,14 +281,35 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleGroupJoin(Packet pkt) {
-        // Payload JSON: {"group_id":N,"target_user_id":M}
+        // Payload JSON: {"group_id":N,"target_user_id":M,"group_name":"..."}
+        // group_name es opcional (FIX, ver mas abajo): el cliente lo incluye
+        // para que el agregado vea el nombre real en vez de "Grupo <id>",
+        // ya que ni GroupManager ni DatabaseManager exponen una consulta de
+        // nombre por ID (evitar tocar esas clases, son de Persona C/T-A6).
         String json   = pkt.getPayloadAsString();
         int groupId   = Integer.parseInt(extractJson(json, "group_id"));
         int targetId  = Integer.parseInt(extractJsonOpt(json, "target_user_id").isEmpty()
                 ? String.valueOf(userId) : extractJsonOpt(json, "target_user_id"));
+        String groupName = extractJsonOpt(json, "group_name");
         boolean ok = groupManager.addMember(groupId, targetId, userId);
         sendPacket(new Packet(OpCode.MSG_ACK, 0, userId,
                 ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"Sin permisos o grupo no existe\"}"));
+
+        // FIX: sin esto, el usuario agregado nunca se entera del group_id y no
+        // puede abrir esa conversacion hasta que llegue el primer GROUP_MSG.
+        // Se notifica directamente al agregado (si no es el mismo que pidio el
+        // join, y si esta online) con un MSG_ACK distinto, payload con accion
+        // explicita para que el cliente lo distinga de un ACK de su propia accion.
+        if (ok && targetId != userId) {
+            ClientHandler targetHandler = onlineMap.get(targetId);
+            if (targetHandler != null) {
+                String safeName = groupName.replace("\"", "");
+                String notice = String.format(
+                        "{\"ok\":true,\"action\":\"added_to_group\",\"group_id\":%d,\"by\":%d,\"group_name\":\"%s\"}",
+                        groupId, userId, safeName);
+                targetHandler.sendPacket(new Packet(OpCode.MSG_ACK, 0, targetId, notice));
+            }
+        }
     }
 
     private void handleGroupLeave(Packet pkt) {
@@ -282,8 +327,19 @@ public class ClientHandler implements Runnable {
     // Envío al cliente (thread-safe)
     // ════════════════════════════════════════════════════════════════════════
 
-    /** Serializa y envía un Packet al cliente. Asigna número de secuencia. */
+    /**
+     * Serializa y envía un Packet al cliente. Asigna número de secuencia.
+     *
+     * FIX (canal de archivos): si este handler es el canal principal y tiene
+     * un canal de archivos adjunto (fileChannel != null), los paquetes de
+     * transferencia (MSG_FILE, MSG_IMAGE, FILE_CHUNK, FILE_COMPLETE) se
+     * redirigen a ese canal en vez de escribirse en el socket de mensajes.
+     */
     public void sendPacket(Packet pkt) {
+        if (!isFileChannel && fileChannel != null && isFileOpcode(pkt.opcode)) {
+            fileChannel.sendPacket(pkt);
+            return;
+        }
         synchronized (writeLock) {
             if (rawOut == null || socket.isClosed()) return;
             try {
@@ -295,6 +351,11 @@ public class ClientHandler implements Runnable {
                 running = false;
             }
         }
+    }
+
+    private static boolean isFileOpcode(OpCode op) {
+        return op == OpCode.MSG_FILE || op == OpCode.MSG_IMAGE
+                || op == OpCode.FILE_CHUNK || op == OpCode.FILE_COMPLETE;
     }
 
     /** Envía bytes crudos (para entrega de mensajes offline ya serializados). */
@@ -330,7 +391,15 @@ public class ClientHandler implements Runnable {
 
     private void cleanup() {
         running = false;
-        if (userId > 0) {
+        if (isFileChannel) {
+            // Canal secundario de archivos: no esta en onlineMap, no debe
+            // cerrar la sesion principal del usuario. Solo se desvincula.
+            ClientHandler primary = onlineMap.get(userId);
+            if (primary != null && primary.fileChannel == this) {
+                primary.fileChannel = null;
+            }
+            log.info("[CH] Canal de archivos cerrado para userId=" + userId + " (" + username + ")");
+        } else if (userId > 0) {
             onlineMap.remove(userId, this);
             auth.logout(token);
             log.info("[CH] " + username + " desconectado. Online=" + onlineMap.size());

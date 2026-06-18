@@ -19,28 +19,103 @@ public class DatabaseManager {
 
     private static final Logger log = Logger.getLogger(DatabaseManager.class.getName());
 
-    private static final String DB_FILE = "dogmessenger.db";
+    private static final String DB_FILE = resolveDbPath();
+
+    private static String resolveDbPath() {
+        String custom = System.getenv("DOGMSG_DB_PATH");
+        return (custom != null && !custom.isBlank()) ? custom : "dogmessenger.db";
+    }
+
     private Connection conn;
 
-    // ════════════════════════════════════════════════════════════════════════
-    // Inicialización
-    // ════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Abre (o crea) la base de datos SQLite y crea todas las tablas si no existen.
-     */
     public synchronized void init() throws SQLException {
+        System.out.println("Paso 1");
         try {
             Class.forName("org.sqlite.JDBC");
+            System.out.println("Paso 2");
         } catch (ClassNotFoundException e) {
             throw new SQLException("Driver SQLite no encontrado. Agrega sqlite-jdbc al classpath.", e);
         }
-        conn = DriverManager.getConnection("jdbc:sqlite:" + DB_FILE);
-        // WAL mode para concurrencia de lecturas
-        conn.createStatement().execute("PRAGMA journal_mode=WAL");
-        conn.createStatement().execute("PRAGMA foreign_keys=ON");
-        createSchema();
-        log.info("[DB] Base de datos inicializada: " + new File(DB_FILE).getAbsolutePath());
+
+        try {
+            conn = DriverManager.getConnection("jdbc:sqlite:" + DB_FILE);
+            System.out.println("Paso 3");
+
+            // busy_timeout (CAMBIO APLICADO)
+            try (Statement st = conn.createStatement()) {
+                System.out.println("ANTES busy_timeout");
+                st.execute("PRAGMA busy_timeout=5000");
+                System.out.println("DESPUES busy_timeout");
+            }
+
+            System.out.println("Paso 4");
+
+            // WAL mode (CAMBIO APLICADO)
+            try {
+                try (Statement st = conn.createStatement()) {
+                    System.out.println("ANTES WAL");
+                    st.execute("PRAGMA journal_mode=WAL");
+                    System.out.println("DESPUES WAL");
+                }
+
+                System.out.println("Paso 5");
+                log.info("[DB] journal_mode=WAL activado.");
+
+            } catch (SQLException walEx) {
+
+                System.out.println("ERROR EN WAL");
+                walEx.printStackTrace();
+
+                log.warning("[DB] No se pudo activar WAL (" + walEx.getMessage()
+                        + "). Usando journal_mode=DELETE como respaldo.");
+
+                try (Statement st = conn.createStatement()) {
+                    st.execute("PRAGMA journal_mode=DELETE");
+                }
+            }
+
+            // foreign_keys (CAMBIO APLICADO)
+            try {
+                System.out.println("ANTES FK");
+
+                try (Statement st = conn.createStatement()) {
+                    st.execute("PRAGMA foreign_keys=ON");
+                }
+
+                System.out.println("DESPUES FK");
+
+            } catch (Exception e) {
+                System.out.println("ERROR EN FOREIGN_KEYS");
+                e.printStackTrace();
+                throw e;
+            }
+
+            System.out.println("Paso 6");
+
+            createSchema();
+            System.out.println("Paso 7");
+
+            log.info("[DB] Base de datos inicializada: " + new File(DB_FILE).getAbsolutePath());
+
+        } catch (SQLException e) {
+
+            System.out.println("\n====================");
+            System.out.println("SQL ORIGINAL:");
+            System.out.println("====================");
+
+            e.printStackTrace();
+
+            if (e.getMessage() != null &&
+                e.getMessage().contains("SQLITE_BUSY")) {
+
+                throw new SQLException(
+                    "La base de datos '" + DB_FILE + "' está bloqueada por otro proceso.\n",
+                    e
+                );
+            }
+
+            throw e;
+        }
     }
 
     private void createSchema() throws SQLException {
@@ -483,6 +558,16 @@ public class DatabaseManager {
     public synchronized void close() {
         try {
             if (conn != null && !conn.isClosed()) {
+                // Forzar checkpoint del WAL: fusiona dogmessenger.db-wal dentro
+                // de dogmessenger.db y elimina los archivos auxiliares -wal/-shm.
+                // Esto evita que queden archivos huérfanos que puedan confundirse
+                // con un bloqueo real en el siguiente arranque.
+                try {
+                    conn.createStatement().execute("PRAGMA wal_checkpoint(TRUNCATE)");
+                } catch (SQLException ignored) {
+                    // Si falla el checkpoint no es crítico; el close() de abajo
+                    // libera el lock de todas formas.
+                }
                 conn.close();
                 log.info("[DB] Conexión cerrada.");
             }

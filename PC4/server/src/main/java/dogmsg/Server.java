@@ -194,7 +194,11 @@ public class Server {
     // Shutdown limpio
     // ════════════════════════════════════════════════════════════════════════
 
-    public void shutdown() {
+    private volatile boolean shutdownCalled = false;
+
+    public synchronized void shutdown() {
+        if (shutdownCalled) return;
+        shutdownCalled = true;
         running = false;
 
         // Cerrar ServerSockets (desbloquea accept())
@@ -260,7 +264,11 @@ public class Server {
                         onlineMap.forEach((id, h) ->
                                 System.out.println("  userId=" + id + " user=" + h.getUsername()));
                     }
-                    case "stop"  -> System.exit(0);
+                    case "stop"  -> {
+                        System.out.println("Cerrando servidor de forma ordenada...");
+                        shutdown();
+                        System.exit(0);
+                    }
                     case "help","?" ->
                         System.out.println("Comandos: status | users | stop | help");
                     case ""      -> {}

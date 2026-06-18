@@ -1,0 +1,9 @@
+<resources>
+    <color name="brand">#FF6D4C2B</color>
+    <color name="brand_dark">#FF4E3620</color>
+    <color name="accent">#FFE2A63B</color>
+    <color name="bubble_in">#FFEDE7E1</color>
+    <color name="bubble_out">#FFD8C3A5</color>
+    <color name="bg">#FFF7F4F0</color>
+    <color name="text_primary">#FF221B14</color>
+</resources>

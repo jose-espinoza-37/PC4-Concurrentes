@@ -158,9 +158,9 @@ def send_packet(sock, opcode, receiver_id, payload=b"", flags=0):
 
 # -- Autenticacion -----------------------------------------------------------
 
-def authenticate(sock):
+def authenticate(host, port):
     """Envia AUTH_REQUEST y espera AUTH_RESPONSE. Retorna True si exitoso."""
-    global _my_user_id, _my_token
+    global _sock, _my_user_id, _my_token
 
     password_hash = hashlib.sha256(BOT_PASSWORD.encode()).hexdigest()
     auth_payload = json.dumps({
@@ -168,13 +168,13 @@ def authenticate(sock):
         "username": BOT_USERNAME,
         "password_hash": password_hash,
         "device_type": "desktop"
-    }).encode("utf-8")
+    }, separators=(',', ':')).encode("utf-8")
 
-    send_packet(sock, OP_AUTH_REQUEST, 0, auth_payload)
+    send_packet(_sock, OP_AUTH_REQUEST, 0, auth_payload)
     log.info(f"AUTH_REQUEST enviado como '{BOT_USERNAME}'")
 
     # Esperar respuesta
-    result = read_packet(sock)
+    result = read_packet(_sock)
     if result is None:
         log.error("No se recibio respuesta de autenticacion")
         return False
@@ -193,17 +193,23 @@ def authenticate(sock):
     else:
         error = resp.get("error", "Error desconocido")
         log.warning(f"Autenticacion fallida: {error}")
-        # Intentar registrar
-        log.info("Intentando registrar el bot...")
-        reg_payload = json.dumps({
-            "action": "register",
-            "username": BOT_USERNAME,
-            "password_hash": password_hash,
-            "device_type": "desktop"
-        }).encode("utf-8")
-        send_packet(sock, OP_AUTH_REQUEST, 0, reg_payload)
+        
+        # --- SOLUCIÓN: RECONECTAR AL SERVIDOR ANTES DE REGISTRAR ---
+        log.info("El servidor cerró la conexión. Reconectando para registrar el bot...")
+        _sock.close()
+        _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _sock.connect((host, port))
 
-        result = read_packet(sock)
+        log.info("Intentando registrar el bot...")
+        auth_payload = json.dumps({
+        "action": "login",
+        "username": BOT_USERNAME,
+        "password_hash": password_hash,
+        "device_type": "desktop"
+    }, separators=(',', ':')).encode("utf-8")
+        send_packet(_sock, OP_AUTH_REQUEST, 0, reg_payload)
+
+        result = read_packet(_sock)
         if result is None:
             return False
         opcode, sender_id, receiver_id, flags, payload = result
@@ -291,7 +297,7 @@ def reader_thread(sock):
 
         if opcode == OP_PING:
             # Responder PONG
-            send_packet(sock, OP_PING, 0)
+            pass
 
         elif opcode == OP_MSG_TEXT:
             try:
@@ -370,7 +376,7 @@ def main():
         sys.exit(1)
 
     # Autenticar
-    if not authenticate(_sock):
+    if not authenticate(host, port):
         log.error("No se pudo autenticar. Saliendo.")
         _sock.close()
         sys.exit(1)
