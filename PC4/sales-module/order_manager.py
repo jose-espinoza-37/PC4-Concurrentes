@@ -14,35 +14,34 @@ def handle_pedir(user_id, args):
     """
     Comando /pedir <product_id> [cantidad]
     Crea un pedido con un solo producto (simplificado).
+    Retorna (texto_respuesta, order_id) si exitoso, o (texto_error, None) si falla.
     """
     parts = args.strip().split()
     if not parts:
-        return "Uso: /pedir <id_producto> [cantidad]\nEjemplo: /pedir 3 2"
+        return "Uso: /pedir <id_producto> [cantidad]\nEjemplo: /pedir 3 2", None
 
     try:
         product_id = int(parts[0])
     except ValueError:
-        return "El ID del producto debe ser un numero. Ejemplo: /pedir 3"
+        return "El ID del producto debe ser un numero. Ejemplo: /pedir 3", None
 
     quantity = 1
     if len(parts) > 1:
         try:
             quantity = int(parts[1])
             if quantity <= 0:
-                return "La cantidad debe ser mayor a 0."
+                return "La cantidad debe ser mayor a 0.", None
         except ValueError:
-            return "La cantidad debe ser un numero. Ejemplo: /pedir 3 2"
+            return "La cantidad debe ser un numero. Ejemplo: /pedir 3 2", None
 
-    # Verificar stock y decrementar
     ok, result = catalog.check_and_decrement_stock(product_id, quantity)
     if not ok:
-        return result
+        return result, None
 
     product = result
     unit_price = product["price"]
     total = unit_price * quantity
 
-    # Crear pedido
     order_id = db.get_next_order_id()
     items = [{
         "product_id": product_id,
@@ -51,9 +50,8 @@ def handle_pedir(user_id, args):
     }]
     db.create_order(order_id, user_id, items, total)
 
-    # Generar recibo
     receipt = receipt_generator.generate_receipt(order_id)
-    return receipt
+    return receipt, order_id
 
 
 def handle_mis_pedidos(user_id):

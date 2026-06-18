@@ -47,6 +47,32 @@ def handle_buscar(query):
     return "\n".join(lines)
 
 
+def handle_precio(query):
+    """Comando /precio <id o nombre> — muestra precio y stock de un producto."""
+    query = query.strip()
+    if not query:
+        return "Uso: /precio <id o nombre>\nEjemplo: /precio 3  o  /precio collar"
+
+    product = None
+    try:
+        product = db.get_product(int(query))
+    except ValueError:
+        results = db.search_products(query)
+        if results:
+            product = results[0]
+
+    if not product:
+        return f"Producto '{query}' no encontrado."
+
+    stock_label = f"{product['stock']} disponibles" if product['stock'] > 0 else "SIN STOCK"
+    return (
+        f"[{product['id']}] {product['name']}\n"
+        f"  Precio: S/ {product['price']:.2f}\n"
+        f"  Stock:  {stock_label}\n"
+        f"  {product['description']}"
+    )
+
+
 def get_product_info(product_id):
     """Obtiene info de un producto por ID."""
     return db.get_product(product_id)
