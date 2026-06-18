@@ -86,7 +86,7 @@ class SocketService : Service() {
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_FILE_PORT = "file_port"
-        const val DEFAULT_HOST = "10.0.2.2"
+        const val DEFAULT_HOST = "192.168.1.103"
         const val DEFAULT_PORT = 9000
         const val DEFAULT_FILE_PORT = 9001
         private const val CHANNEL_ID = "dogmsg_conn"

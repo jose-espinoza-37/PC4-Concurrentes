@@ -65,6 +65,15 @@ class ChatEngine(
     fun myUserId(): Long = socket.myUserId
     fun isConnected(): Boolean = socket.isConnected()
 
+    /**
+     * Lista de conversaciones (1-1 y grupos) con su ultimo mensaje, leida
+     * desde el cache local persistente. Usado por MainActivity para poblar
+     * la lista de chats al iniciar o al volver de un ChatActivity -- antes
+     * la lista solo se llenaba en memoria en vivo y se vaciaba al recrearse
+     * la Activity, aunque los mensajes seguian guardados en SQLite.
+     */
+    fun conversationSummaries(): List<LocalCache.ConversationSummary> = cache.conversationSummaries()
+
     private var lastUsername: String? = null
     private var lastPasswordHash: String? = null
 
@@ -120,6 +129,13 @@ class ChatEngine(
             sendGroupPlain(peerId, text)
             return
         }
+        if (peerId == BOT_USER_ID) {
+            // El bot de ventas (sales_node.py) ignora cualquier mensaje con
+            // flags & 0x01 (cifrado) -- ver reader_thread() en ese archivo.
+            // Por eso, igual que con los grupos, se manda sin cifrar.
+            sendPlainToUser(peerId, text)
+            return
+        }
         try {
             val crypto = cryptoByPeer[peerId]
             if (crypto != null && crypto.isReady()) {
@@ -129,6 +145,16 @@ class ChatEngine(
                 cacheAsSent(peerId, false, text, 0)
                 startKeyExchange(peerId)
             }
+        } catch (e: Exception) {
+            notifySystem("Error al enviar: ${e.message}")
+        }
+    }
+
+    private fun sendPlainToUser(peerId: Long, text: String) {
+        try {
+            val payload = text.toByteArray(StandardCharsets.UTF_8)
+            val seq = socket.sendPacket(OpCode.MSG_TEXT, peerId, 0, payload)
+            cacheAsSent(peerId, false, text, seq)
         } catch (e: Exception) {
             notifySystem("Error al enviar: ${e.message}")
         }
@@ -433,5 +459,13 @@ class ChatEngine(
 
     companion object {
         private const val TAG = "ChatEngine"
+
+        /**
+         * user_id asignado por el servidor al bot de ventas (ventas_bot,
+         * ver sales_node.py). El bot ignora MSG_TEXT con flag encriptado
+         * (flags & 0x01), por eso los mensajes hacia este peer se mandan
+         * siempre en texto plano -- igual que los mensajes de grupo.
+         */
+        const val BOT_USER_ID = 5L
     }
 }

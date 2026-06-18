@@ -133,7 +133,8 @@ class MainActivity : AppCompatActivity(), ChatEngine.UiCallbacks {
     }
 
     private fun refreshChatList() {
-        adapter.notifyDataSetChanged()
+        val summaries = engine?.conversationSummaries() ?: emptyList()
+        adapter.loadFromSummaries(summaries)
     }
 
     private fun promptNewChat() {
@@ -310,6 +311,34 @@ class ChatListAdapter(private val onClick: (Conversation) -> Unit) :
             existing.lastTimestamp = ts
         } else {
             items[key] = Conversation(peerId, isGroup, name, lastMessage, ts)
+        }
+        notifyDataSetChanged()
+    }
+
+    /**
+     * Carga conversaciones desde el cache local persistente (SQLite), sin
+     * pisar el nombre real de una conversacion ya conocida en esta sesion
+     * (por ejemplo, si el usuario ya abrio ese chat y volvio). Antes la
+     * lista solo se llenaba en memoria via upsert() en vivo, asi que se
+     * vaciaba (aparentando "no tener chats") cada vez que MainActivity se
+     * recreaba, aunque los mensajes seguian persistidos en SQLite.
+     */
+    fun loadFromSummaries(summaries: List<LocalCache.ConversationSummary>) {
+        for (s in summaries) {
+            val key = "${s.peerId}:${s.isGroup}"
+            val existing = items[key]
+            val preview = when (s.lastType) {
+                "image" -> "[Imagen]"
+                "file" -> "[Archivo]"
+                else -> s.lastText ?: ""
+            }
+            if (existing != null) {
+                existing.lastMessage = preview
+                existing.lastTimestamp = s.lastTimestamp
+            } else {
+                val placeholderName = if (s.isGroup) "Grupo ${s.peerId}" else "Usuario ${s.peerId}"
+                items[key] = Conversation(s.peerId, s.isGroup, placeholderName, preview, s.lastTimestamp)
+            }
         }
         notifyDataSetChanged()
     }
