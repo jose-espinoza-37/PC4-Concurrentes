@@ -1,0 +1,46 @@
+plugins {
+    id 'application'
+    // Plugin opcional para generar un fat-jar ejecutable con dependencias.
+    // Si no quieres shadow, puedes quitarlo y usar 'installDist'.
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'dogmsg'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // QR (generacion + lectura). Recomendado por la guia. NO es libreria de
+    // comunicacion: la red usa solo java.net (ver SocketManager / FileChunker).
+    implementation 'com.google.zxing:core:3.5.3'
+    implementation 'com.google.zxing:javase:3.5.3'
+
+    // Cache local SQLite (driver JDBC). El protocolo de red no depende de esto.
+    implementation 'org.xerial:sqlite-jdbc:3.45.3.0'
+}
+
+application {
+    mainClass = 'dogmsg.client.DogMessengerApp'
+}
+
+// Ejecutar: ./gradlew run --args="--host 192.168.1.100 --port 9000 --file-port 9001"
+run {
+    standardInput = System.in
+}
+
+// Fat-jar: ./gradlew shadowJar  ->  build/libs/client-desktop-1.0.0-all.jar
+shadowJar {
+    archiveClassifier = 'all'
+    manifest {
+        attributes 'Main-Class': 'dogmsg.client.DogMessengerApp'
+    }
+}

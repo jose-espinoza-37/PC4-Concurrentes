@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="8dp"
+    android:paddingVertical="4dp">
+
+    <!-- Burbuja recibida: alineada a la izquierda -->
+    <LinearLayout
+        android:id="@+id/bubbleInWrapper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="start"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/textIn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="48dp"
+            android:background="@color/bubble_in"
+            android:padding="10dp"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+
+    <!-- Burbuja enviada: alineada a la derecha -->
+    <LinearLayout
+        android:id="@+id/bubbleOutWrapper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/textOut"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="48dp"
+            android:background="@color/bubble_out"
+            android:padding="10dp"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/textMeta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="10sp"
+        android:textColor="#88776655"
+        android:gravity="end" />
+</LinearLayout>

@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">Dog Messenger</string>
+
+    <!-- Login -->
+    <string name="hint_username">Usuario</string>
+    <string name="hint_password">Contrasena</string>
+    <string name="btn_login">Iniciar sesion</string>
+    <string name="btn_register">Registrarse</string>
+    <string name="status_disconnected">Desconectado</string>
+    <string name="status_connecting">Conectando…</string>
+    <string name="status_connected">Conectado</string>
+
+    <!-- Lista de conversaciones -->
+    <string name="title_chats">Conversaciones</string>
+    <string name="btn_new_chat">Nueva conversacion</string>
+    <string name="btn_new_group">Nuevo grupo</string>
+    <string name="btn_show_qr">Mi QR</string>
+    <string name="btn_scan_qr">Escanear QR</string>
+    <string name="hint_peer_id">ID de usuario destino</string>
+    <string name="hint_group_name">Nombre del grupo</string>
+    <string name="hint_member_id">ID de usuario a agregar</string>
+    <string name="btn_add_member">Agregar</string>
+    <string name="btn_create">Crear</string>
+
+    <!-- Chat -->
+    <string name="hint_message">Escribe un mensaje…</string>
+    <string name="btn_send">Enviar</string>
+    <string name="btn_attach">Adjuntar</string>
+
+    <!-- QR -->
+    <string name="qr_scan_title">Escanea el QR de tu otro dispositivo</string>
+    <string name="qr_show_title">Muestra este QR en tu otro dispositivo</string>
+    <string name="qr_toggle">Cambiar a generar / escanear</string>
+    <string name="camera_denied">Permiso de camara denegado</string>
+</resources>

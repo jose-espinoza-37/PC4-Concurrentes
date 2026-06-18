@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Archivos enviados: copiados temporalmente a cacheDir (ChatActivity.sendFile) -->
+    <cache-path name="cache_files" path="." />
+    <!-- Archivos recibidos: guardados en el almacenamiento externo de la app (FileChannel) -->
+    <external-files-path name="received_files" path="DogMessenger" />
+</paths>
