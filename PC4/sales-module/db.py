@@ -14,7 +14,7 @@ Thread-safe: todas las operaciones usan un Lock global.
 
 import sqlite3
 import threading
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 DB_FILE = "sales.db"
 
@@ -42,7 +42,8 @@ def init_db():
             description TEXT    DEFAULT '',
             price       REAL    NOT NULL CHECK(price > 0),
             stock       INTEGER NOT NULL DEFAULT 0 CHECK(stock >= 0),
-            category    TEXT    DEFAULT 'general'
+            category    TEXT    DEFAULT 'general',
+            image       TEXT    DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS orders (
@@ -77,23 +78,29 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_daily_date     ON daily_sales(sale_date);
         """)
 
+        # Migracion: agregar columna image si no existe
+        try:
+            c.execute("SELECT image FROM products LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE products ADD COLUMN image TEXT DEFAULT ''")
+
         # Insertar productos de ejemplo si la tabla esta vacia
         count = c.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         if count == 0:
             sample_products = [
-                ("Collar para perro", "Collar ajustable de nylon", 15.99, 50, "accesorios"),
-                ("Correa retractil", "Correa de 5 metros", 24.99, 30, "accesorios"),
-                ("Alimento premium 10kg", "Alimento seco para perro adulto", 45.50, 100, "alimento"),
-                ("Alimento cachorro 5kg", "Alimento seco para cachorros", 32.00, 80, "alimento"),
-                ("Juguete hueso", "Hueso de goma resistente", 8.99, 200, "juguetes"),
-                ("Pelota resistente", "Pelota de caucho para masticar", 6.50, 150, "juguetes"),
-                ("Cama ortopedica M", "Cama tamano mediano", 55.00, 25, "descanso"),
-                ("Shampoo antipulgas", "Shampoo 500ml", 12.99, 60, "higiene"),
-                ("Plato doble acero", "Plato comedero y bebedero", 18.50, 40, "accesorios"),
-                ("Arnes deportivo", "Arnes acolchado talla M", 29.99, 35, "accesorios"),
+                ("Collar para perro", "Collar ajustable de nylon", 15.99, 50, "accesorios", "collar.jpg"),
+                ("Correa retractil", "Correa de 5 metros", 24.99, 30, "accesorios", "correa.jpg"),
+                ("Alimento premium 10kg", "Alimento seco para perro adulto", 45.50, 100, "alimento", "alimento_premium.jpg"),
+                ("Alimento cachorro 5kg", "Alimento seco para cachorros", 32.00, 80, "alimento", "alimento_cachorro.jpg"),
+                ("Juguete hueso", "Hueso de goma resistente", 8.99, 200, "juguetes", "hueso.jpg"),
+                ("Pelota resistente", "Pelota de caucho para masticar", 6.50, 150, "juguetes", "pelota.jpg"),
+                ("Cama ortopedica M", "Cama tamano mediano", 55.00, 25, "descanso", "cama.jpg"),
+                ("Shampoo antipulgas", "Shampoo 500ml", 12.99, 60, "higiene", "shampoo.jpg"),
+                ("Plato doble acero", "Plato comedero y bebedero", 18.50, 40, "accesorios", "plato.jpg"),
+                ("Arnes deportivo", "Arnes acolchado talla M", 29.99, 35, "accesorios", "arnes.jpg"),
             ]
             c.executemany(
-                "INSERT INTO products (name, description, price, stock, category) VALUES (?,?,?,?,?)",
+                "INSERT INTO products (name, description, price, stock, category, image) VALUES (?,?,?,?,?,?)",
                 sample_products
             )
 
@@ -274,3 +281,70 @@ def save_daily_summary(summary):
         )
         conn.commit()
         conn.close()
+
+
+def get_weekly_summary(target_date=None):
+    if target_date is None:
+        target_date = date.today().isoformat()
+    start = (date.fromisoformat(target_date) - timedelta(days=6)).isoformat()
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT COUNT(*) as total_orders, COALESCE(SUM(total),0) as total_revenue "
+            "FROM orders WHERE DATE(created_at) BETWEEN ? AND ?",
+            (start, target_date)
+        ).fetchone()
+        conn.close()
+        return {
+            "period": f"{start} a {target_date}",
+            "total_orders": row["total_orders"],
+            "total_revenue": row["total_revenue"],
+        }
+
+
+def get_monthly_summary(target_date=None):
+    if target_date is None:
+        target_date = date.today().isoformat()
+    month_start = target_date[:8] + "01"
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT COUNT(*) as total_orders, COALESCE(SUM(total),0) as total_revenue "
+            "FROM orders WHERE DATE(created_at) BETWEEN ? AND ?",
+            (month_start, target_date)
+        ).fetchone()
+        conn.close()
+        return {
+            "period": f"{month_start} a {target_date}",
+            "total_orders": row["total_orders"],
+            "total_revenue": row["total_revenue"],
+        }
+
+
+def get_top_products(period_start, period_end, limit=5):
+    with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT p.name, SUM(oi.quantity) as qty, SUM(oi.quantity * oi.unit_price) as revenue "
+            "FROM order_items oi "
+            "JOIN orders o ON oi.order_id = o.order_id "
+            "JOIN products p ON oi.product_id = p.id "
+            "WHERE DATE(o.created_at) BETWEEN ? AND ? "
+            "GROUP BY p.name ORDER BY qty DESC LIMIT ?",
+            (period_start, period_end, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
+def get_frequent_clients(period_start, period_end, limit=5):
+    with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT user_id, COUNT(*) as order_count, SUM(total) as total_spent "
+            "FROM orders WHERE DATE(created_at) BETWEEN ? AND ? "
+            "GROUP BY user_id ORDER BY order_count DESC LIMIT ?",
+            (period_start, period_end, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
