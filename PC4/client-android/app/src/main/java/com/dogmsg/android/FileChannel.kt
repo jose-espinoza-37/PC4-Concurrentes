@@ -74,6 +74,20 @@ class FileChannel(
     @Volatile private var running = false
     private var receiveThread: Thread? = null
 
+    // FIX CRITICO: antes sendFile() abria una conexion NUEVA al puerto 9001
+    // por cada envio, ademas de la conexion persistente de recepcion ya
+    // abierta por connectAndListen(). El servidor (ClientHandler) solo
+    // admite UN canal de archivos secundario por userId (existing.fileChannel
+    // = this, sin acumular); al llegar la segunda conexion, pisaba la
+    // referencia a la primera. Cuando sendFile() terminaba y cerraba su
+    // socket, el cleanup() del servidor borraba esa referencia por completo
+    // (primary.fileChannel = null), dejando a la conexion de recepcion
+    // original huerfana del lado del servidor -- de ahi el error "Canal de
+    // archivos desconectado" justo despues de enviar. Ahora se reutiliza el
+    // MISMO socket/OutputStream que connectAndListen ya mantiene abierto.
+    @Volatile private var sharedOut: OutputStream? = null
+    private val writeLock = Object()
+
     // ----------------- Envio -----------------
 
     /** Envia un archivo o imagen al peer. Bloqueante: llamar desde un hilo de fondo. */
@@ -82,17 +96,14 @@ class FileChannel(
         val size = file.length()
         if (size > MAX_FILE_SIZE) throw IOException("Archivo excede el limite de 25 MB")
 
+        val out = sharedOut
+            ?: throw IOException("Canal de archivos no esta listo todavia. Intenta de nuevo en un momento.")
+
         val transferId = UUID.randomUUID().toString().replace("-", "")
         val totalChunks = Math.ceil(size.toDouble() / CHUNK_SIZE).toInt().coerceAtLeast(1)
         val mime = guessMimeType(file, isImage)
 
-        Socket().use { s ->
-            s.connect(InetSocketAddress(host, filePort), 5000)
-            s.tcpNoDelay = true
-            val out = s.getOutputStream()
-
-            authenticateOrThrow(s, out)
-
+        synchronized(writeLock) {
             // Metadata SIEMPRE como MSG_FILE (ver nota de clase arriba).
             val meta = Json.obj()
                 .put("transfer_id", transferId)
@@ -105,38 +116,42 @@ class FileChannel(
                 meta.toByteArray(StandardCharsets.UTF_8))
             out.write(metaPkt.toBytes())
             out.flush()
+        }
 
-            // Chunks: "transferId|chunkIndex|" + bytes
-            val crc = CRC32()
-            file.inputStream().use { fis ->
-                var index = 0
-                val buf = ByteArray(CHUNK_SIZE)
-                while (true) {
-                    val read = fis.read(buf)
-                    if (read <= 0) break
-                    crc.update(buf, 0, read)
+        // Chunks: "transferId|chunkIndex|" + bytes
+        val crc = CRC32()
+        file.inputStream().use { fis ->
+            var index = 0
+            val buf = ByteArray(CHUNK_SIZE)
+            while (true) {
+                val read = fis.read(buf)
+                if (read <= 0) break
+                crc.update(buf, 0, read)
 
-                    val prefix = "$transferId|$index|".toByteArray(StandardCharsets.UTF_8)
-                    val chunkPayload = ByteArray(prefix.size + read)
-                    System.arraycopy(prefix, 0, chunkPayload, 0, prefix.size)
-                    System.arraycopy(buf, 0, chunkPayload, prefix.size, read)
+                val prefix = "$transferId|$index|".toByteArray(StandardCharsets.UTF_8)
+                val chunkPayload = ByteArray(prefix.size + read)
+                System.arraycopy(prefix, 0, chunkPayload, 0, prefix.size)
+                System.arraycopy(buf, 0, chunkPayload, prefix.size, read)
 
-                    val chunkPkt = Packet.now(OpCode.FILE_CHUNK, 0, senderId, receiverId, 0, chunkPayload)
+                val chunkPkt = Packet.now(OpCode.FILE_CHUNK, 0, senderId, receiverId, 0, chunkPayload)
+                synchronized(writeLock) {
                     out.write(chunkPkt.toBytes())
                     out.flush()
-
-                    index++
-                    onProgress(((index.toDouble() / totalChunks) * 100).toInt().coerceAtMost(100))
                 }
-            }
 
-            // FILE_COMPLETE con checksum real
-            val complete = Json.obj()
-                .put("transfer_id", transferId)
-                .put("checksum_crc32", crc.value)
-                .build()
-            val completePkt = Packet.now(OpCode.FILE_COMPLETE, 0, senderId, receiverId, 0,
-                complete.toByteArray(StandardCharsets.UTF_8))
+                index++
+                onProgress(((index.toDouble() / totalChunks) * 100).toInt().coerceAtMost(100))
+            }
+        }
+
+        // FILE_COMPLETE con checksum real
+        val complete = Json.obj()
+            .put("transfer_id", transferId)
+            .put("checksum_crc32", crc.value)
+            .build()
+        val completePkt = Packet.now(OpCode.FILE_COMPLETE, 0, senderId, receiverId, 0,
+            complete.toByteArray(StandardCharsets.UTF_8))
+        synchronized(writeLock) {
             out.write(completePkt.toBytes())
             out.flush()
         }
@@ -169,6 +184,7 @@ class FileChannel(
     fun stop() {
         running = false
         receiveThread?.interrupt()
+        sharedOut = null
     }
 
     private fun receiveLoop() {
@@ -197,10 +213,18 @@ class FileChannel(
             val parser = PacketParser(s.getInputStream())
 
             authenticateOrThrow(s, out, parser)
+            sharedOut = out
 
-            while (running) {
-                val p = parser.readPacket() ?: break
-                handlePacket(p)
+            try {
+                while (running) {
+                    val p = parser.readPacket() ?: break
+                    handlePacket(p)
+                }
+            } finally {
+                // Esta conexion ya no sirve para enviar (se va a cerrar al
+                // salir del use{}); sendFile() debe fallar explicitamente
+                // en vez de escribir a un socket muerto.
+                sharedOut = null
             }
         }
     }

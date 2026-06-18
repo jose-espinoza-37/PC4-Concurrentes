@@ -27,6 +27,15 @@ class LocalCache(context: Context) :
         var status: String = "sent"  // sent | delivered | read
     )
 
+    /** Resumen de una conversacion: ultimo mensaje, para poblar la lista de chats. */
+    data class ConversationSummary(
+        val peerId: Long,
+        val isGroup: Boolean,
+        val lastText: String?,
+        val lastType: String,
+        val lastTimestamp: Long
+    )
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -105,6 +114,45 @@ class LocalCache(context: Context) :
     fun updateStatus(localId: Long, status: String) {
         val values = ContentValues().apply { put("status", status) }
         writableDatabase.update("cache_messages", values, "id=?", arrayOf(localId.toString()))
+    }
+
+    /**
+     * Devuelve el ultimo mensaje de cada conversacion distinta (peer_id +
+     * is_group), ordenado por mas reciente primero. Se usa para poblar la
+     * lista de chats al abrir la app o al volver de un ChatActivity --
+     * antes esa lista solo se llenaba en memoria via upsert() en vivo, asi
+     * que se vaciaba (aparentando "no tener chats") cada vez que el proceso
+     * se reciclaba o MainActivity se recreaba, aunque los mensajes seguian
+     * persistidos aqui en SQLite.
+     */
+    @Synchronized
+    fun conversationSummaries(): List<ConversationSummary> {
+        val out = ArrayList<ConversationSummary>()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT m.peer_id, m.is_group, m.text, m.type, m.timestamp " +
+                    "FROM cache_messages m " +
+                    "INNER JOIN (" +
+                    "  SELECT peer_id, is_group, MAX(timestamp) AS max_ts " +
+                    "  FROM cache_messages GROUP BY peer_id, is_group" +
+                    ") last ON m.peer_id = last.peer_id AND m.is_group = last.is_group " +
+                    "  AND m.timestamp = last.max_ts " +
+                    "ORDER BY m.timestamp DESC",
+            null
+        )
+        cursor.use { c ->
+            while (c.moveToNext()) {
+                out.add(
+                    ConversationSummary(
+                        peerId = c.getLong(0),
+                        isGroup = c.getInt(1) == 1,
+                        lastText = c.getString(2),
+                        lastType = c.getString(3) ?: "text",
+                        lastTimestamp = c.getLong(4)
+                    )
+                )
+            }
+        }
+        return out
     }
 
     companion object {
